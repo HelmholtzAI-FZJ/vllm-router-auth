@@ -1,4 +1,4 @@
-# VLLM Router
+# vLLM Router
 
 A high-performance and light-weight request forwarding system for vLLM large scale deployments, providing advanced load balancing methods and prefill/decode disaggregation support.
 
@@ -30,6 +30,12 @@ cargo --version
 **Python with pip installed**
 
 ### Installation & Basic Usage
+
+### Prerequisites
+```bash
+sudo apt-get update
+sudo apt-get install -y protobuf-compiler libprotobuf-dev
+```
 
 #### Rust Binary
 ```bash
