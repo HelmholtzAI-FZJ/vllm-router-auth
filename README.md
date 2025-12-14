@@ -1,4 +1,4 @@
-# VLLM Router
+# vLLM Router
 
 A high-performance and light-weight request forwarding system for vLLM large scale deployments, providing advanced load balancing methods and prefill/decode disaggregation support.
 
@@ -25,6 +25,10 @@ source $HOME/.cargo/env
 # Verify installation
 rustc --version
 cargo --version
+
+# Install protobuf compiler (on Ubuntu/Debian)
+sudo apt-get update
+sudo apt-get install -y protobuf-compiler libprotobuf-dev
 ```
 
 **Python with pip installed**
