@@ -43,9 +43,9 @@ struct Router {
     max_tree_size: usize,
     max_payload_size: usize,
     intra_node_data_parallel_size: usize,
-        api_key: Option<String>,
-        api_key_validation_urls: Vec<String>,
-        log_dir: Option<String>,
+    api_key: Option<String>,
+    api_key_validation_urls: Vec<String>,
+    log_dir: Option<String>,
 
     log_level: Option<String>,
     service_discovery: bool,

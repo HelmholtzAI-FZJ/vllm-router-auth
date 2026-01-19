@@ -382,14 +382,7 @@ async fn authorize_request(
         .filter(|value| !value.is_empty())
         .ok_or_else(|| (StatusCode::UNAUTHORIZED, AUTH_FAILURE_MESSAGE).into_response())?;
 
-    if let Some(valid) = state
-        .context
-        .api_key_cache
-        .read()
-        .await
-        .get(token)
-        .copied()
-    {
+    if let Some(valid) = state.context.api_key_cache.read().await.get(token).copied() {
         if valid {
             return Ok(());
         }
@@ -579,7 +572,6 @@ async fn list_workers_rest(
         Json(response).into_response()
     }
 }
-
 
 /// GET /workers/{url} - Get specific worker info
 async fn get_worker(

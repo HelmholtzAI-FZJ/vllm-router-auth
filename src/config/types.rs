@@ -1,6 +1,6 @@
 use super::ConfigResult;
-use serde::{Deserialize, Serialize};
 use crate::config::validation::ConfigValidator;
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 /// Main router configuration
