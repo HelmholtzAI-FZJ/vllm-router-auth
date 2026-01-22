@@ -7,27 +7,83 @@ env:
 
 steps:
   # ============================================================================
+  # Version Consistency Check
+  # ============================================================================
+  - label: ":mag: Verify Version Tag Matches pyproject.toml"
+    key: "version-check"
+    command: |
+      set -euo pipefail
+
+      # Extract version from git tag (e.g., v0.1.0 -> 0.1.0)
+      TAG_VERSION="$${BUILDKITE_TAG#v}"
+      echo "Git tag version: $TAG_VERSION"
+
+      # Extract version from pyproject.toml
+      PYPROJECT_VERSION=$(grep -E '^version\s*=' pyproject.toml | sed 's/.*=\s*"\(.*\)"/\1/')
+      echo "pyproject.toml version: $PYPROJECT_VERSION"
+
+      # Compare versions
+      if [ "$TAG_VERSION" != "$PYPROJECT_VERSION" ]; then
+        echo "❌ ERROR: Version mismatch!"
+        echo "   Git tag version:       $TAG_VERSION"
+        echo "   pyproject.toml version: $PYPROJECT_VERSION"
+        echo ""
+        echo "Please update pyproject.toml to match the git tag before releasing."
+        exit 1
+      fi
+
+      echo "✅ Version check passed: $TAG_VERSION"
+    if: build.tag =~ /^v.*/
+    agents:
+      queue: "cpu_queue_postmerge"
+
+  - wait
+
+  # ============================================================================
   # Build Release Artifacts
   # ============================================================================
   - label: ":package: Build Release Artifacts"
-    command: |
-      # Build Rust binary for release
-      cargo build --release
+    key: "build_wheels"
+    plugins:
+      - docker#v5.11.0:
+          image: "quay.io/pypa/manylinux_2_28_x86_64"
+          workdir: /workdir
+          volumes:
+            - ".:/workdir"
+          environment:
+            - "CARGO_INCREMENTAL=0"
+            - "RUST_BACKTRACE=1"
+          command:
+            - bash
+            - -c
+            - |
+              set -euo pipefail
 
-      # Build Python wheels for multiple platforms
-      pip install -U pip setuptools wheel setuptools-rust cibuildwheel
+              # Install system dependencies (manylinux_2_28 uses dnf)
+              dnf install -y openssl-devel protobuf-compiler protobuf-devel
 
-      # Build wheels for Linux
-      python -m build
+              # Install Rust toolchain
+              curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain nightly
+              source $$HOME/.cargo/env
 
-      # If cibuildwheel is needed for multiple Python versions:
-      # cibuildwheel --platform linux
+              # Build Rust binary for release
+              cargo build --release
+
+              # Build Python wheels using Python 3.9 (available in manylinux image)
+              /opt/python/cp39-cp39/bin/pip install -U pip setuptools wheel setuptools-rust build auditwheel
+              /opt/python/cp39-cp39/bin/python -m build
+
+              # Repair wheel to have proper manylinux tags
+              /opt/python/cp39-cp39/bin/auditwheel repair dist/*.whl -w dist/
+              # Remove the original non-manylinux wheel
+              rm dist/*-linux_x86_64.whl || true
     artifact_paths:
       - "target/release/vllm-router"
       - "dist/*.whl"
       - "dist/*.tar.gz"
+    depends_on: "version-check"
     agents:
-      queue: "cpu_queue_premerge"
+      queue: "cpu_queue_postmerge"
 
   - wait
 
@@ -35,101 +91,55 @@ steps:
   # Run Release Tests
   # ============================================================================
   - label: ":test_tube: Smoke Test Release Binary"
+    key: "smoke-test-binary"
     command: |
       buildkite-agent artifact download "target/release/vllm-router" .
       chmod +x target/release/vllm-router
-      ./target/release/vllm-router --version
-      ./target/release/vllm-router --help
+      docker run --rm -v "$$PWD:/workdir" -w /workdir rustlang/rust:nightly-bullseye ./target/release/vllm-router --version
+      docker run --rm -v "$$PWD:/workdir" -w /workdir rustlang/rust:nightly-bullseye ./target/release/vllm-router --help
     agents:
-      queue: "cpu_queue_premerge"
+      queue: "cpu_queue_postmerge"
 
   - label: ":python: Test Python Wheel"
+    key: "test-python-wheel"
     command: |
       buildkite-agent artifact download "dist/*.whl" .
       pip install dist/*.whl
       python -c "import vllm_router; print(vllm_router.__version__)"
     agents:
-      queue: "cpu_queue_premerge"
+      queue: "cpu_queue_postmerge"
 
   - wait
 
   # ============================================================================
   # Publish to PyPI
   # ============================================================================
-  - block: ":pypi: Publish to PyPI?"
-    prompt: "Ready to publish to PyPI? This action cannot be undone."
-
-  - label: ":pypi: Publish to PyPI"
+  - label: ":python: Publish to PyPI"
+    key: "publish-pypi"
     command: |
-      buildkite-agent artifact download "dist/*" .
-      pip install twine
+      set -euo pipefail
 
-      # Upload to PyPI (requires PYPI_TOKEN environment variable)
-      twine upload dist/*.whl dist/*.tar.gz --username __token__ --password "$PYPI_TOKEN"
+      # Download build artifacts
+      buildkite-agent artifact download "dist/*.whl" .
+      buildkite-agent artifact download "dist/*.tar.gz" .
+
+      # Upload to PyPI using Docker
+      docker run --rm \
+        -v "$$PWD:/workdir" \
+        -w /workdir \
+        -e TWINE_USERNAME=__token__ \
+        -e TWINE_PASSWORD="$$PYPI_TOKEN" \
+        python:3.11-slim bash -c '
+          pip install twine
+          echo "📦 Uploading packages to PyPI..."
+          twine upload dist/* --verbose
+          echo "✅ Successfully published to PyPI!"
+        '
+    depends_on:
+      - "build_wheels"
+      - "test-python-wheel"
+      - "smoke-test-binary"
     if: build.tag =~ /^v.*/
+    soft_fail: false
     agents:
-      queue: "cpu_queue_premerge"
-
-  # ============================================================================
-  # Build and Publish Docker Images
-  # ============================================================================
-  - label: ":docker: Build Release Docker Images"
-    command: |
-      # Extract version from tag (e.g., v1.2.3 -> 1.2.3)
-      VERSION="${BUILDKITE_TAG#v}"
-
-      # Build Docker image
-      docker build -f Dockerfile.router \
-        -t vllm-router:${VERSION} \
-        -t vllm-router:latest \
-        --build-arg VERSION=${VERSION} \
-        .
-
-      # Save image info
-      docker images vllm-router
-    artifact_paths:
-      - "docker-images.txt"
-    agents:
-      queue: "cpu_queue_premerge"
-
-  - block: ":docker: Push Docker Images?"
-    prompt: "Ready to push Docker images? Requires Docker Hub credentials."
-
-  - label: ":docker: Publish Docker Images"
-    command: |
-      VERSION="${BUILDKITE_TAG#v}"
-
-      # Login to Docker Hub (requires DOCKER_USERNAME and DOCKER_PASSWORD)
-      echo "$DOCKER_PASSWORD" | docker login -u "$DOCKER_USERNAME" --password-stdin
-
-      # Push versioned image
-      docker push vllm-router:${VERSION}
-
-      # Push latest tag
-      docker push vllm-router:latest
-
-      # Logout
-      docker logout
-    if: build.tag =~ /^v.*/
-    agents:
-      queue: "cpu_queue_premerge"
-
-  # ============================================================================
-  # Create GitHub Release
-  # ============================================================================
-  - label: ":github: Create GitHub Release"
-    command: |
-      # Download all artifacts
-      buildkite-agent artifact download "target/release/vllm-router" .
-      buildkite-agent artifact download "dist/*" .
-
-      # Create GitHub release (requires gh CLI and GITHUB_TOKEN)
-      gh release create ${BUILDKITE_TAG} \
-        --title "Release ${BUILDKITE_TAG}" \
-        --notes "Release ${BUILDKITE_TAG} of vLLM Router" \
-        target/release/vllm-router \
-        dist/*.whl \
-        dist/*.tar.gz
-    if: build.tag =~ /^v.*/
-    agents:
-      queue: "cpu_queue_premerge"
+      queue: "cpu_queue_postmerge"
