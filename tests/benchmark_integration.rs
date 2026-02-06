@@ -65,6 +65,7 @@ fn default_chat_completion_request() -> ChatCompletionRequest {
         stop_token_ids: None,
         no_stop_trim: false,
         ignore_eos: false,
+        add_generation_prompt: true,
         continue_final_message: false,
         skip_special_tokens: true,
         // vLLM Extensions
@@ -76,6 +77,7 @@ fn default_chat_completion_request() -> ChatCompletionRequest {
         echo: None,
         reasoning_effort: None,
         include_reasoning: true,
+        structured_outputs: None,
     }
 }
 
@@ -171,6 +173,17 @@ fn test_benchmark_request_creation() {
         presence_penalty: Some(0.0),
         frequency_penalty: Some(0.0),
         parallel_tool_calls: Some(true),
+        structured_outputs: Some(vllm_router_rs::protocols::spec::StructuredOutputsParams {
+            json: Some(serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "name": {"type": "string"},
+                    "age": {"type": "integer"}
+                },
+                "required": ["name", "age"]
+            })),
+            ..Default::default()
+        }),
         ..default_chat_completion_request()
     };
 
