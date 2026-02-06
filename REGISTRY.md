@@ -13,9 +13,10 @@ registry.jsc.fz-juelich.de/kaas/rke2-clusters/blablador/vllm-router-token
 | Tag | Description | Platforms |
 |-----|-------------|-----------|
 | `latest` | Latest release (multi-arch manifest list) | amd64, arm64 |
-| `0.1.2` | Version 0.1.2 (multi-arch manifest list) | amd64, arm64 |
-| `0.1.2-amd64` | Version 0.1.2 for AMD64 only | amd64 |
-| `0.1.2-arm64` | Version 0.1.2 for ARM64 only | arm64 |
+| `0.1.11` | Version 0.1.11 (multi-arch manifest list) | amd64, arm64 |
+| `0.1.11-amd64` | Version 0.1.11 for AMD64 only | amd64 |
+| `0.1.11-arm64` | Version 0.1.11 for ARM64 only | arm64 |
+| `0.1.2` | Previous version (multi-arch manifest list) | amd64, arm64 |
 | `0.1.1` | Previous version (multi-arch manifest list) | amd64, arm64 |
 | `0.1.0` | Initial version (multi-arch manifest list) | amd64, arm64 |
 
@@ -23,14 +24,14 @@ registry.jsc.fz-juelich.de/kaas/rke2-clusters/blablador/vllm-router-token
 
 ```bash
 # Pull multi-arch image (automatically selects correct platform)
-docker pull registry.jsc.fz-juelich.de/kaas/rke2-clusters/blablador/vllm-router-token:0.1.2
+docker pull registry.jsc.fz-juelich.de/kaas/rke2-clusters/blablador/vllm-router-token:0.1.11
 
 # Pull latest version
 docker pull registry.jsc.fz-juelich.de/kaas/rke2-clusters/blablador/vllm-router-token:latest
 
 # Pull specific platform
-docker pull registry.jsc.fz-juelich.de/kaas/rke2-clusters/blablador/vllm-router-token:0.1.2-amd64
-docker pull registry.jsc.fz-juelich.de/kaas/rke2-clusters/blablador/vllm-router-token:0.1.2-arm64
+docker pull registry.jsc.fz-juelich.de/kaas/rke2-clusters/blablador/vllm-router-token:0.1.11-amd64
+docker pull registry.jsc.fz-juelich.de/kaas/rke2-clusters/blablador/vllm-router-token:0.1.11-arm64
 ```
 
 ## Build & Push Commands
@@ -39,22 +40,22 @@ docker pull registry.jsc.fz-juelich.de/kaas/rke2-clusters/blablador/vllm-router-
 # Build multi-arch image for both amd64 and arm64
 cd /path/to/vllm-router-auth
 docker buildx build --platform linux/amd64,linux/arm64 \
-    -t registry.jsc.fz-juelich.de/kaas/rke2-clusters/blablador/vllm-router-token:0.1.2 \
+    -t registry.jsc.fz-juelich.de/kaas/rke2-clusters/blablador/vllm-router-token:0.1.11 \
     --push -f Dockerfile.router .
 
 # Create platform-specific tags
 docker buildx imagetools create \
-    -t registry.jsc.fz-juelich.de/kaas/rke2-clusters/blablador/vllm-router-token:0.1.2-amd64 \
-    registry.jsc.fz-juelich.de/kaas/rke2-clusters/blablador/vllm-router-token:0.1.2@sha256:<amd64-digest>
+    -t registry.jsc.fz-juelich.de/kaas/rke2-clusters/blablador/vllm-router-token:0.1.11-amd64 \
+    registry.jsc.fz-juelich.de/kaas/rke2-clusters/blablador/vllm-router-token:0.1.11@sha256:<amd64-digest>
 
 docker buildx imagetools create \
-    -t registry.jsc.fz-juelich.de/kaas/rke2-clusters/blablador/vllm-router-token:0.1.2-arm64 \
-    registry.jsc.fz-juelich.de/kaas/rke2-clusters/blablador/vllm-router-token:0.1.2@sha256:<arm64-digest>
+    -t registry.jsc.fz-juelich.de/kaas/rke2-clusters/blablador/vllm-router-token:0.1.11-arm64 \
+    registry.jsc.fz-juelich.de/kaas/rke2-clusters/blablador/vllm-router-token:0.1.11@sha256:<arm64-digest>
 
 # Update latest tag
 docker buildx imagetools create \
     -t registry.jsc.fz-juelich.de/kaas/rke2-clusters/blablador/vllm-router-token:latest \
-    registry.jsc.fz-juelich.de/kaas/rke2-clusters/blablador/vllm-router-token:0.1.2
+    registry.jsc.fz-juelich.de/kaas/rke2-clusters/blablador/vllm-router-token:0.1.11
 ```
 
 ## Kubernetes Deployment
@@ -78,6 +79,7 @@ spec:
 
 ## Version History
 
-- **0.1.2** - Current: Health endpoints (`/health`, `/health_generate`) now accessible without authentication
+- **0.1.11** - Current: Model aggregation from all workers in /v1/models endpoint, systemd service support, REGISTRY.md and AGENTS.md documentation
+- **0.1.2** - Health endpoints (`/health`, `/health_generate`) now accessible without authentication
 - **0.1.1** - Previous release
 - **0.1.0** - Initial release
