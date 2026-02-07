@@ -155,7 +155,7 @@ impl RouterManager {
         &self,
         config: WorkerConfigRequest,
     ) -> Result<WorkerApiResponse, WorkerErrorResponse> {
-        if config.auto_register_models.unwrap_or(false) {
+        if config.auto_register_models.unwrap_or(true) {
             self.add_worker_with_all_models(config).await
         } else {
             self.add_single_worker(config).await
