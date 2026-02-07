@@ -155,16 +155,24 @@ impl RouterManager {
         &self,
         config: WorkerConfigRequest,
     ) -> Result<WorkerApiResponse, WorkerErrorResponse> {
-        // Build labels from configuration
+        if config.auto_register_models.unwrap_or(false) {
+            self.add_worker_with_all_models(config).await
+        } else {
+            self.add_single_worker(config).await
+        }
+    }
+
+    async fn add_single_worker(
+        &self,
+        config: WorkerConfigRequest,
+    ) -> Result<WorkerApiResponse, WorkerErrorResponse> {
         let mut labels = config.labels.clone();
 
-        // Query server info if model_id not provided
         let model_id = if let Some(model_id) = config.model_id {
             model_id
         } else {
             match self.query_server_info(&config.url).await {
                 Ok(info) => {
-                    // Extract model_id from server info
                     info.model_id
                         .or_else(|| {
                             info.model_path
@@ -180,7 +188,6 @@ impl RouterManager {
             }
         };
 
-        // Add configuration to labels
         labels.insert("model_id".to_string(), model_id.clone());
 
         if let Some(priority) = config.priority {
@@ -191,7 +198,6 @@ impl RouterManager {
             labels.insert("cost".to_string(), cost.to_string());
         }
 
-        // Add gRPC-specific configuration if provided
         if let Some(tokenizer_path) = config.tokenizer_path {
             labels.insert("tokenizer_path".to_string(), tokenizer_path);
         }
@@ -219,16 +225,12 @@ impl RouterManager {
             ),
         };
 
-        // Register worker
         let worker_arc: Arc<dyn Worker> = Arc::from(worker);
         let worker_id = self.worker_registry.register(worker_arc.clone());
 
-        // Notify PolicyRegistry about the new worker
-        // Extract policy hint from labels if provided
         let policy_hint = labels.get("policy").map(|s| s.as_str());
         let policy = self.policy_registry.on_worker_added(&model_id, policy_hint);
 
-        // Log which type of router would handle this worker (for debugging)
         let expected_router = match config.worker_type.as_deref() {
             Some("prefill") | Some("decode") => "http-pd",
             _ => "http-regular",
@@ -247,7 +249,6 @@ impl RouterManager {
             policy.name()
         );
 
-        // Return worker info
         let worker_info = self.worker_to_info(worker_id.as_str(), &worker_arc);
 
         Ok(WorkerApiResponse {
@@ -257,38 +258,129 @@ impl RouterManager {
         })
     }
 
+    async fn add_worker_with_all_models(
+        &self,
+        config: WorkerConfigRequest,
+    ) -> Result<WorkerApiResponse, WorkerErrorResponse> {
+        let models = self.query_worker_models(&config.url).await
+            .map_err(|e| WorkerErrorResponse {
+                error: format!("Failed to query models from {}: {}", config.url, e),
+                code: "MODEL_QUERY_FAILED".to_string(),
+            })?;
+
+        if models.is_empty() {
+            return Ok(WorkerApiResponse {
+                success: false,
+                message: format!("No models found at {}", config.url),
+                worker: None,
+            });
+        }
+
+        let mut registered_workers = Vec::new();
+
+        for model_id in &models {
+            let mut labels = config.labels.clone();
+            labels.insert("model_id".to_string(), model_id.clone());
+
+            if let Some(priority) = config.priority {
+                labels.insert("priority".to_string(), priority.to_string());
+            }
+
+            if let Some(cost) = config.cost {
+                labels.insert("cost".to_string(), cost.to_string());
+            }
+
+            if let Some(ref tokenizer_path) = config.tokenizer_path {
+                labels.insert("tokenizer_path".to_string(), tokenizer_path.clone());
+            }
+
+            if let Some(ref chat_template) = config.chat_template {
+                labels.insert("chat_template".to_string(), chat_template.clone());
+            }
+
+            let worker = match config.worker_type.as_deref() {
+                Some("prefill") => WorkerFactory::create_prefill_with_labels(
+                    config.url.clone(),
+                    config.bootstrap_port,
+                    labels.clone(),
+                    CircuitBreakerConfig::default(),
+                ),
+                Some("decode") => WorkerFactory::create_decode_with_labels(
+                    config.url.clone(),
+                    labels.clone(),
+                    CircuitBreakerConfig::default(),
+                ),
+                _ => WorkerFactory::create_regular_with_labels(
+                    config.url.clone(),
+                    labels.clone(),
+                    CircuitBreakerConfig::default(),
+                ),
+            };
+
+            let worker_arc: Arc<dyn Worker> = Arc::from(worker);
+            let worker_id = self.worker_registry.register(worker_arc.clone());
+
+            let policy_hint = labels.get("policy").map(|s| s.as_str());
+            self.policy_registry.on_worker_added(&model_id, policy_hint);
+
+            info!(
+                "Added worker {} with URL {} for model {}",
+                worker_id.as_str(),
+                config.url,
+                model_id
+            );
+
+            registered_workers.push((worker_id, worker_arc));
+        }
+
+        let worker_info = if let Some((ref worker_id, ref worker_arc)) = registered_workers.first() {
+            self.worker_to_info(worker_id.as_str(), worker_arc)
+        } else {
+            return Ok(WorkerApiResponse {
+                success: false,
+                message: "No workers registered".to_string(),
+                worker: None,
+            });
+        };
+
+        Ok(WorkerApiResponse {
+            success: true,
+            message: format!("Registered {} workers for {} models", registered_workers.len(), models.len()),
+            worker: Some(worker_info),
+        })
+    }
+
     /// Remove a worker from the registry
     pub fn remove_worker_from_registry(
         &self,
         url: &str,
     ) -> Result<WorkerApiResponse, WorkerErrorResponse> {
-        // Get worker to extract model_id before removing
-        let model_id = self
-            .worker_registry
-            .get_by_url(url)
-            .map(|worker| worker.model_id().to_string());
+        let workers = self.worker_registry.get_all_by_url(url);
 
-        if let Some(_worker) = self.worker_registry.remove_by_url(url) {
-            // Notify PolicyRegistry about worker removal
-            if let Some(ref model_id) = model_id {
-                self.policy_registry.on_worker_removed(model_id);
-
-                info!("Removed worker with URL {} for model {}", url, model_id);
-            } else {
-                info!("Removed worker with URL {}", url);
-            }
-
-            Ok(WorkerApiResponse {
-                success: true,
-                message: format!("Worker {} removed successfully", url),
-                worker: None,
-            })
-        } else {
-            Err(WorkerErrorResponse {
+        if workers.is_empty() {
+            return Err(WorkerErrorResponse {
                 error: format!("Worker with URL {} not found", url),
                 code: "WORKER_NOT_FOUND".to_string(),
-            })
+            });
         }
+
+        let model_ids: Vec<String> = workers.iter()
+            .map(|w| w.model_id().to_string())
+            .collect();
+
+        let removed = self.worker_registry.remove_all_by_url(url);
+
+        for model_id in &model_ids {
+            self.policy_registry.on_worker_removed(model_id);
+        }
+
+        info!("Removed {} workers with URL {} for models {:?}", removed.len(), url, model_ids);
+
+        Ok(WorkerApiResponse {
+            success: true,
+            message: format!("{} workers removed successfully", removed.len()),
+            worker: None,
+        })
     }
 
     /// List all workers
@@ -342,6 +434,35 @@ impl RouterManager {
                         .json::<ServerInfo>()
                         .await
                         .map_err(|e| format!("Failed to parse server info: {}", e))
+                } else {
+                    Err(format!("Server returned status: {}", response.status()))
+                }
+            }
+            Err(e) => Err(format!("Failed to connect to server: {}", e)),
+        }
+    }
+
+    /// Query all models from a worker URL's /v1/models endpoint
+    async fn query_worker_models(&self, url: &str) -> Result<Vec<String>, String> {
+        let models_url = format!("{}/v1/models", url.trim_end_matches('/'));
+
+        match self.client.get(&models_url).send().await {
+            Ok(response) => {
+                if response.status().is_success() {
+                    let json: serde_json::Value = response
+                        .json()
+                        .await
+                        .map_err(|e| format!("Failed to parse models response: {}", e))?;
+
+                    let mut models = Vec::new();
+                    if let Some(data) = json.get("data").and_then(|d| d.as_array()) {
+                        for model in data {
+                            if let Some(id) = model.get("id").and_then(|i| i.as_str()) {
+                                models.push(id.to_string());
+                            }
+                        }
+                    }
+                    Ok(models)
                 } else {
                     Err(format!("Server returned status: {}", response.status()))
                 }
@@ -537,6 +658,7 @@ impl WorkerManagement for RouterManager {
             bootstrap_port: None,
             tokenizer_path: None,
             chat_template: None,
+            auto_register_models: None,
         };
 
         match self.add_worker(config).await {

@@ -43,6 +43,11 @@ pub struct WorkerConfigRequest {
     /// Additional labels (optional)
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
     pub labels: HashMap<String, String>,
+
+    /// Auto-register all models from the worker (optional, default: false)
+    /// When true, queries /v1/models from the worker and registers a worker for each model
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub auto_register_models: Option<bool>,
 }
 
 /// Worker information for API responses

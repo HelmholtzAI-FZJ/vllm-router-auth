@@ -74,9 +74,18 @@ impl WorkerRegistry {
 
     /// Register a new worker
     pub fn register(&self, worker: Arc<dyn Worker>) -> WorkerId {
-        let worker_id = if let Some(existing_id) = self.url_to_id.get(worker.url()) {
-            // Worker with this URL already exists, update it
-            existing_id.clone()
+        let worker_id = if let Some(existing_id_ref) = self.url_to_id.get(worker.url()) {
+            let existing_id_value = WorkerId(existing_id_ref.key().clone());
+            let existing_worker = self.get(&existing_id_value);
+            if let Some(existing) = existing_worker {
+                if existing.model_id() == worker.model_id() {
+                    existing_id_value
+                } else {
+                    WorkerId::new()
+                }
+            } else {
+                WorkerId::new()
+            }
         } else {
             WorkerId::new()
         };
@@ -238,6 +247,32 @@ impl WorkerRegistry {
             .iter()
             .map(|entry| entry.value().clone())
             .collect()
+    }
+
+    /// Get all workers for a given URL
+    pub fn get_all_by_url(&self, url: &str) -> Vec<Arc<dyn Worker>> {
+        self.workers
+            .iter()
+            .filter(|entry| entry.value().url() == url)
+            .map(|entry| entry.value().clone())
+            .collect()
+    }
+
+    /// Remove all workers for a given URL
+    pub fn remove_all_by_url(&self, url: &str) -> Vec<Arc<dyn Worker>> {
+        let mut removed = Vec::new();
+        let workers_to_remove: Vec<WorkerId> = self.workers
+            .iter()
+            .filter(|entry| entry.value().url() == url)
+            .map(|entry| entry.key().clone())
+            .collect();
+
+        for worker_id in workers_to_remove {
+            if let Some(worker) = self.remove(&worker_id) {
+                removed.push(worker);
+            }
+        }
+        removed
     }
 
     /// Get all workers with their IDs
